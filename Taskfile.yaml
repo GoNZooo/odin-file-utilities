@@ -1,0 +1,45 @@
+version: 3
+
+tasks:
+  default:
+    cmds:
+      - task: test
+
+  run:
+    cmds:
+      - odin run .
+    method: none
+    silent: true
+
+  debug:
+    deps:
+      - build_debug
+    cmds:
+      - gdb ./bin/debug
+    method: none
+    silent: true
+    aliases:
+      - d
+
+  build_debug:
+    cmds:
+      - odin build . -out:bin/debug -o:none -debug
+    sources:
+      - ./*.odin
+    generates:
+      - bin/debug
+    silent: true
+    aliases:
+      - bd
+
+  test:
+    cmds:
+      - odin test . -out:bin/test
+    aliases:
+      - t
+    sources:
+      - ./*.odin
+    method: none
+    silent: true
+
+interval: 250ms

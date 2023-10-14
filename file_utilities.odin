@@ -56,9 +56,9 @@ open_file_stream :: proc(filename: string) -> (r: io.Stream, error: OpenFileErro
 	return os.stream_from_handle(handle), nil
 }
 
-// Returns a `LineIterator` to be used with `line_iterator_next`. Note that unless an allocator is
-// provided the returned lines are only valid until the next call to `line_iterator_next` and that
-// the internal buffer will change over time.
+// Returns a `LineIterator` to be used with `line_iterator_next`. Note that unless an allocator was
+// provided when the iterator was created the returned lines are only valid until the next call to
+// `line_iterator_next` and the internal buffer will change over time.
 line_iterator_init :: proc(stream: io.Stream, buffer: []byte) -> (it: LineIterator) {
 	it.stream = stream
 	it.position = len(buffer)
@@ -68,10 +68,14 @@ line_iterator_init :: proc(stream: io.Stream, buffer: []byte) -> (it: LineIterat
 	return it
 }
 
+// Closes the underlying stream that the iterator uses. Note that this does not free/destroy any
+// potentially allocated memory that the iterator is responsible for.
 line_iterator_close :: proc(it: ^LineIterator) {
 	io.close(it.stream)
 }
 
+// Destroys any resources that the iterator is responsible for. This is a no-op if the iterator was
+// initialized without an allocator.
 line_iterator_destroy :: proc(it: ^LineIterator) {
 	if it.allocator != nil {
 		for slice in it.slices {

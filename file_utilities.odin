@@ -6,8 +6,13 @@ import "core:log"
 import "core:os"
 import "core:testing"
 
-ReadFileError :: union {
+ReadLineError :: union {
+	BufferTooSmall,
+	io.Error,
 	ReadDone,
+}
+
+ReadFileError :: union {
 	OpenError,
 	io.Error,
 	ReaderCreationError,
@@ -24,6 +29,7 @@ LineIterator :: struct {
 	reader:         io.Reader,
 	buffer:         []byte,
 	position:       int,
+	file_position:  i64,
 	last_read_size: int,
 }
 
@@ -32,6 +38,12 @@ ReaderCreationError :: struct {
 	stream:   io.Stream,
 }
 
+BufferTooSmall :: struct {
+	size: int,
+}
+
+// Returns a `LineIterator` to be used with `line_iterator_next`. Note that the used buffer will
+// change over time so the caller should copy returned lines that matter if they should be kept.
 line_iterator_init :: proc(
 	filename: string,
 	buffer: []byte,
@@ -56,10 +68,14 @@ line_iterator_init :: proc(
 	return line_iterator, nil
 }
 
-line_iterator_next :: proc(it: ^LineIterator) -> (line: []byte, error: ReadFileError) {
+// Returns the next line in the iterator or `ReadDone` if there are no more lines to read. Note
+// that the returned line is only valid until the next call to `line_iterator_next` and that the
+// internal buffer changes over time, so the caller should copy the returned line if it should be
+// kept.
+line_iterator_next :: proc(it: ^LineIterator) -> (line: []byte, error: ReadLineError) {
 	assert(it.position <= len(it.buffer), "Position in `LineIterator` out of bounds")
 
-	if it.last_read_size == 0 {
+	if it.position == it.last_read_size {
 		return nil, ReadDone{}
 	}
 
@@ -69,32 +85,70 @@ line_iterator_next :: proc(it: ^LineIterator) -> (line: []byte, error: ReadFileE
 		it.last_read_size = bytes_read
 	}
 
-	// Find our next newline marker
 	newline_index := bytes.index_any(it.buffer[it.position:], []byte{'\r', '\n'})
 	if newline_index == -1 {
-		// TODO: handle the case where we have a partial line at the end of our buffer
-		log.debugf("No line found")
-	} else {
-		// we have a newline marker in our buffer so we can return a slice into the buffer
-		line = it.buffer[it.position:newline_index]
-		it.position = newline_index
-		log.debugf("Found line: %s", string(line))
-
-		return line, nil
+		bytes_read := io.read_at(it.reader, it.buffer, it.file_position) or_return
+		it.position = 0
+		it.last_read_size = bytes_read
+		newline_index = bytes.index_any(it.buffer[it.position:], []byte{'\r', '\n'})
+		if newline_index == -1 {
+			return nil, BufferTooSmall{size = len(it.buffer)}
+		}
 	}
+
+	// we have a newline marker in our buffer so we can return a slice into the buffer
+	line = it.buffer[it.position:it.position + newline_index]
+	it.position += newline_index + 1
+	it.file_position += i64(newline_index + 1)
 
 	return line, nil
 }
 
 @(test, private = "package")
-test_line_by_lite_iterator :: proc(t: ^testing.T) {
+test_line_iterator :: proc(t: ^testing.T) {
 	context.logger = log.create_console_logger()
 
-	buffer: [8]byte
+	buffer: [32]byte
 	it, init_error := line_iterator_init("odinfmt.json", buffer[:])
 	testing.expect_value(t, init_error, nil)
 
 	line, read_error := line_iterator_next(&it)
 	testing.expect_value(t, read_error, nil)
 	testing.expect_value(t, string(line), "{")
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, string(line), `  "character_width": 100,`)
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, string(line), `  "tabs": true,`)
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, string(line), `  "tabs_width": 4,`)
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, string(line), `  "spaces": 2`)
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, string(line), "}")
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, ReadDone{})
+	testing.expect_value(t, string(line), "")
+
+	too_small_buffer: [16]byte
+	it, init_error = line_iterator_init("odinfmt.json", too_small_buffer[:])
+	testing.expect_value(t, init_error, nil)
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, nil)
+	testing.expect_value(t, string(line), "{")
+
+	line, read_error = line_iterator_next(&it)
+	testing.expect_value(t, read_error, BufferTooSmall{size = 16})
+	testing.expect_value(t, string(line), "")
 }

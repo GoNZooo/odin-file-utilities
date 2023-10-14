@@ -17,7 +17,6 @@ ReadLineError :: union {
 
 OpenFileError :: union {
 	OpenError,
-	ReaderCreateError,
 }
 
 OpenError :: struct {
@@ -33,7 +32,7 @@ ReaderCreateError :: struct {
 ReadDone :: struct {}
 
 LineIterator :: struct {
-	reader:         io.Reader,
+	stream:         io.Stream,
 	buffer:         []byte,
 	position:       int,
 	file_position:  i64,
@@ -48,30 +47,29 @@ BufferTooSmall :: struct {
 
 // Creates an `io.Reader` directly from a filename. This is analogous to
 // `os.open` -> `os.stream_from_handle`.
-open_file_stream :: proc(filename: string) -> (r: io.Reader, error: OpenFileError) {
+open_file_stream :: proc(filename: string) -> (r: io.Stream, error: OpenFileError) {
 	handle, open_error := os.open(filename, os.O_RDONLY)
 	if open_error != os.ERROR_NONE {
 		return io.Stream{}, OpenError{filename = filename, error = open_error}
 	}
-	stream := os.stream_from_handle(handle)
-	reader, to_reader_ok := io.to_reader(stream)
-	if !to_reader_ok {
-		return io.Stream{}, ReaderCreateError{filename = filename, stream = stream}
-	}
 
-	return reader, nil
+	return os.stream_from_handle(handle), nil
 }
 
 // Returns a `LineIterator` to be used with `line_iterator_next`. Note that unless an allocator is
 // provided the returned lines are only valid until the next call to `line_iterator_next` and that
 // the internal buffer will change over time.
-line_iterator_init :: proc(reader: io.Reader, buffer: []byte) -> (it: LineIterator) {
-	it.reader = reader
+line_iterator_init :: proc(stream: io.Stream, buffer: []byte) -> (it: LineIterator) {
+	it.stream = stream
 	it.position = len(buffer)
 	it.buffer = buffer
 	it.last_read_size = -1
 
 	return it
+}
+
+line_iterator_close :: proc(it: ^LineIterator) {
+	io.close(it.stream)
 }
 
 line_iterator_destroy :: proc(it: ^LineIterator) {
@@ -109,14 +107,14 @@ line_iterator_next :: proc(it: ^LineIterator) -> (line: []byte, error: ReadLineE
 	}
 
 	if it.position == len(it.buffer) {
-		bytes_read := io.read_full(it.reader, it.buffer) or_return
+		bytes_read := io.read_full(it.stream, it.buffer) or_return
 		it.position = 0
 		it.last_read_size = bytes_read
 	}
 
 	newline_index := bytes.index_any(it.buffer[it.position:], []byte{'\r', '\n'})
 	if newline_index == -1 {
-		bytes_read := io.read_at(it.reader, it.buffer, it.file_position) or_return
+		bytes_read := io.read_at(it.stream, it.buffer, it.file_position) or_return
 		it.position = 0
 		it.last_read_size = bytes_read
 		newline_index = bytes.index_any(it.buffer[it.position:], []byte{'\r', '\n'})

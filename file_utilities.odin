@@ -140,6 +140,7 @@ test_line_iterator :: proc(t: ^testing.T) {
 	testing.expect_value(t, read_error, ReadDone{})
 	testing.expect_value(t, string(line), "")
 
+	// buffer is too small
 	too_small_buffer: [16]byte
 	it, init_error = line_iterator_init("odinfmt.json", too_small_buffer[:])
 	testing.expect_value(t, init_error, nil)
@@ -151,4 +152,8 @@ test_line_iterator :: proc(t: ^testing.T) {
 	line, read_error = line_iterator_next(&it)
 	testing.expect_value(t, read_error, BufferTooSmall{size = 16})
 	testing.expect_value(t, string(line), "")
+
+	// file does not exist
+	it, init_error = line_iterator_init("does_not_exist", buffer[:])
+	testing.expect_value(t, init_error, OpenError{filename = "does_not_exist", error = os.ENOENT})
 }

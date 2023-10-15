@@ -45,7 +45,7 @@ BufferTooSmall :: struct {
 	size: int,
 }
 
-// Creates an `io.Reader` directly from a filename. This is analogous to
+// Creates an `io.Stream` directly from a filename. This is analogous to
 // `os.open` -> `os.stream_from_handle`.
 open_file_stream :: proc(filename: string) -> (r: io.Stream, error: OpenFileError) {
 	handle, open_error := os.open(filename, os.O_RDONLY)
@@ -56,9 +56,9 @@ open_file_stream :: proc(filename: string) -> (r: io.Stream, error: OpenFileErro
 	return os.stream_from_handle(handle), nil
 }
 
-// Returns a `LineIterator` to be used with `line_iterator_next`. Note that unless an allocator was
-// provided when the iterator was created the returned lines are only valid until the next call to
-// `line_iterator_next` and the internal buffer will change over time.
+// Returns a `LineIterator` to be used with `line_iterator_next`. Note that each line returned will
+// only be valid until the next call to `line_iterator_next` and that you should use
+// `line_iterator_init_with_allocator` if you want to keep lines around, or copy them yourself.
 line_iterator_init :: proc(stream: io.Stream, buffer: []byte) -> (it: LineIterator) {
 	it.stream = stream
 	it.position = len(buffer)
@@ -66,6 +66,23 @@ line_iterator_init :: proc(stream: io.Stream, buffer: []byte) -> (it: LineIterat
 	it.last_read_size = -1
 
 	return it
+}
+
+// Returns a `LineIterator` to be used with `line_iterator_next`. Takes an allocator that will make
+// it so that each line returned is copied, allowing for the caller to keep lines around for later.
+line_iterator_init_with_allocator :: proc(
+	reader: io.Reader,
+	buffer: []byte,
+	allocator: mem.Allocator,
+) -> (
+	it: LineIterator,
+	error: mem.Allocator_Error,
+) {
+	it = line_iterator_init(reader, buffer)
+	it.allocator = allocator
+	it.slices = make([dynamic][]byte, 0, 0, allocator) or_return
+
+	return it, nil
 }
 
 // Closes the underlying stream that the iterator uses. Note that this does not free/destroy any
@@ -85,24 +102,9 @@ line_iterator_destroy :: proc(it: ^LineIterator) {
 	}
 }
 
-line_iterator_init_with_allocator :: proc(
-	reader: io.Reader,
-	buffer: []byte,
-	allocator: mem.Allocator,
-) -> (
-	it: LineIterator,
-	error: mem.Allocator_Error,
-) {
-	it = line_iterator_init(reader, buffer)
-	it.allocator = allocator
-	it.slices = make([dynamic][]byte, 0, 0, allocator) or_return
-
-	return it, nil
-}
-
 // Returns the next line in the iterator or `ReadDone` if there are no more lines to read. Note
 // that unless the iterator was created with an allocator the returned lines are only valid until
-// the next call to `line_iterator_next` and that the internal buffer will change over time.
+// the next call to `line_iterator_next`. The internal buffer changes over time.
 line_iterator_next :: proc(it: ^LineIterator) -> (line: []byte, error: ReadLineError) {
 	assert(it.position <= len(it.buffer), "Position in `LineIterator` out of bounds")
 
